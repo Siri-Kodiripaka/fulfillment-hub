@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fulfillment Hub</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:#f5f7fb;color:#172033}
+.layout{display:flex;min-height:100vh}.sidebar{width:230px;background:#101828;color:#fff;padding:24px 16px;position:fixed;height:100vh}
+.brand{font-size:21px;font-weight:800;margin:4px 10px 28px}.brand span{color:#7ee787}
+.nav button{width:100%;background:transparent;border:0;color:#cbd5e1;text-align:left;padding:12px 14px;border-radius:9px;margin:3px 0;font-size:14px;cursor:pointer}.nav button.active,.nav button:hover{background:#1d2939;color:#fff}
+.main{margin-left:230px;padding:28px;width:calc(100% - 230px)}h1{margin:0 0 6px;font-size:28px}.sub{color:#667085;margin-bottom:24px}
+.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:24px}.card{background:#fff;padding:18px;border-radius:12px;border:1px solid #e5e7eb}.label{font-size:12px;color:#667085}.value{font-size:27px;font-weight:800;margin-top:7px}
+.panel{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:18px}.panel h2{font-size:17px;margin:0 0 16px}
+table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:#667085;font-weight:600;border-bottom:1px solid #eaecf0;padding:10px}td{padding:12px 10px;border-bottom:1px solid #f0f2f5}
+.badge{padding:5px 8px;border-radius:999px;font-size:11px;font-weight:700;display:inline-block}.high{background:#fee4e2;color:#b42318}.ok{background:#dcfae6;color:#067647}.warn{background:#fef0c7;color:#b54708}.neutral{background:#eef2f6;color:#475467}
+button.action{border:0;background:#155eef;color:#fff;border-radius:7px;padding:7px 10px;cursor:pointer}.stock{background:#ecfdf3;color:#027a48;border:1px solid #abefc6;border-radius:7px;padding:7px 10px;cursor:pointer}.filters{display:flex;gap:8px;margin-bottom:14px}.filters button{border:1px solid #d0d5dd;background:#fff;padding:8px 12px;border-radius:7px;cursor:pointer}
+.hidden{display:none}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:1000px){.cards{grid-template-columns:repeat(3,1fr)}.sidebar{width:190px}.main{margin-left:190px;width:calc(100% - 190px)}} 
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+<div class="brand">🌱 Fulfillment <span>Hub</span></div>
+<div class="nav">
+<button class="active" onclick="show('dashboard',this)">▣ Dashboard</button>
+<button onclick="show('orders',this)">▤ Orders</button>
+<button onclick="show('priority',this)">⚡ Priority Queue</button>
+<button onclick="show('inventory',this)">▦ Inventory</button>
+<button onclick="show('issues',this)">⚠ Issues</button>
+</div>
+</aside>
+<main class="main">
+<section id="dashboard">
+<h1>Operations Dashboard</h1><div class="sub">A single view of today's fulfillment workflow.</div>
+<div id="cards" class="cards"></div>
+<div class="panel"><h2>Recent Priority Orders</h2><div id="priorityTable"></div></div>
+<div class="grid2"><div class="panel"><h2>Workflow</h2><div id="workflow"></div></div><div class="panel"><h2>Attention Required</h2><div id="alerts"></div></div></div>
+</section>
+
+<section id="orders" class="hidden"><h1>Orders</h1><div class="sub">Track every order from receipt to shipment.</div><div class="panel">
+<div class="filters">
+<input id="orderSearch" oninput="applyOrderFilters()" placeholder="Search order or customer..." style="flex:1;border:1px solid #d0d5dd;border-radius:7px;padding:9px">
+<button onclick="setOrderFilter('all')">All</button><button onclick="setOrderFilter('priority')">Priority</button><button onclick="setOrderFilter('delayed')">Delayed</button>
+</div><div id="ordersTable"></div></div></section>
+
+<section id="priority" class="hidden"><h1>Priority Queue</h1><div class="sub">Urgent orders are surfaced first so deadlines are visible.</div><div class="panel"><div id="priorityFull"></div></div></section>
+
+<section id="inventory" class="hidden"><h1>Inventory</h1><div class="sub">Compare required stock with what is actually available.</div><div class="panel"><div id="inventoryTable"></div></div></section>
+
+<section id="issues" class="hidden"><h1>Issues</h1><div class="sub">Track exceptions instead of handling them informally.</div><div class="panel"><div id="issuesTable"></div></div></section>
+</main>
+</div>
+<script>
+let allOrders=[];
+const api = p => fetch('/api'+p).then(r=>r.json());
+function show(id,btn){document.querySelectorAll('main section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden');document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');if(id==='orders')loadOrders();if(id==='priority')renderPriority();if(id==='inventory')loadInventory();if(id==='issues')loadIssues();}
+function badge(text){let c=text==='High'||text==='Delayed'?'high':(text==='Open'||text==='Picking'||text==='Processing'?'warn':(text==='Resolved'||text==='Staged'?'ok':'neutral'));return `<span class="badge ${c}">${text}</span>`}
+async function loadDashboard(){
+ const d=await api('/dashboard'); const labels=[['Total Orders',d.total_orders],['Priority Orders',d.priority_orders],['Delayed Orders',d.delayed_orders],['Ready to Ship',d.ready_to_ship],['Inventory Issues',d.inventory_issues],['Awaiting Pickup',d.awaiting_pickup]];
+ document.getElementById('cards').innerHTML=labels.map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value">${x[1]}</div></div>`).join('');
+ allOrders=await api('/orders'); renderPriority();
+ let counts={Received:0,Processing:0,Picking:0,Packing:0,Staged:0,Delayed:0};allOrders.forEach(o=>counts[o.status]=(counts[o.status]||0)+1);
+ document.getElementById('workflow').innerHTML=Object.entries(counts).map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee"><span>${k}</span><b>${v}</b></div>`).join('');
+ let alerts=allOrders.filter(o=>o.priority||o.status==='Delayed').slice(0,5);document.getElementById('alerts').innerHTML=alerts.map(o=>`<div style="padding:9px 0"><b>${o.order_no}</b> — ${badge(o.status)} <small>${o.deadline}</small></div>`).join('');
+}
+function orderRows(data){return `<table><thead><tr><th>Order</th><th>Customer</th><th>Product</th><th>Priority</th><th>Status</th><th>Deadline</th><th>Courier</th><th></th></tr></thead><tbody>${data.map(o=>`<tr><td><b>${o.order_no}</b></td><td>${o.customer}</td><td>${o.product}<br><small>${o.variant} × ${o.quantity}</small></td><td>${o.priority?badge('High'):badge('Normal')}</td><td>${badge(o.status)}</td><td>${o.deadline}</td><td>${o.courier}</td><td><button class="action" onclick="advance(${o.id})">Advance</button></td></tr>`).join('')}</tbody></table>`}
+let orderFilter='all';
+function urgency(o){
+ let m=(o.deadline||'').match(/(\\d+)(?::(\\d+))?\\s*(AM|PM)/i); if(!m)return 9999;
+ let hh=Number(m[1])%12, mm=Number(m[2]||0)+(m[3].toUpperCase()==='PM'?720:0);
+ return hh*60+mm;
+}
+function sortedOrders(data){
+ return [...data].sort((a,b)=>(b.status==='Delayed')-(a.status==='Delayed') || b.priority-a.priority || urgency(a)-urgency(b));
+}
+async function loadOrders(){allOrders=await api('/orders');applyOrderFilters()}
+function setOrderFilter(f){orderFilter=f;applyOrderFilters()}
+function applyOrderFilters(){
+ let data=allOrders;
+ const q=(document.getElementById('orderSearch')?.value||'').toLowerCase().trim();
+ if(q)data=data.filter(o=>o.order_no.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q));
+ if(orderFilter==='priority')data=data.filter(o=>o.priority);
+ if(orderFilter==='delayed')data=data.filter(o=>o.status==='Delayed');
+ document.getElementById('ordersTable').innerHTML=orderRows(sortedOrders(data));
+}
+async function advance(id) {
+    const order = allOrders.find(o => o.id === id);
+
+    if (!order) {
+        alert("Order not found.");
+        return;
+    }
+
+    const workflow = [
+        "Received",
+        "Processing",
+        "Picking",
+        "Packing",
+        "Staged",
+        "Shipped"
+    ];
+
+    let currentStatus = order.status;
+
+    // Delayed orders return to Processing
+    if (currentStatus === "Delayed") {
+        currentStatus = "Processing";
+    }
+
+    const currentIndex = workflow.indexOf(currentStatus);
+
+    if (currentIndex === -1) {
+        alert("Unknown status: " + order.status);
+        return;
+    }
+
+    if (currentIndex >= workflow.length - 1) {
+        alert("This order is already Shipped.");
+        return;
+    }
+
+    const nextStatus = workflow[currentIndex + 1];
+
+    try {
+        const response = await fetch("/api/orders/" + id, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                status: nextStatus
+            })
+        });
+
+        if (!response.ok) {
+            alert("Failed to update order.");
+            return;
+        }
+
+        order.status = nextStatus;
+
+        applyOrderFilters();
+
+    } catch (error) {
+        alert("Could not connect to the server.");
+    }
+}
+function renderPriority() {
+    const priorityOrders = allOrders
+        .filter(o => o.priority)
+        .sort((a, b) => {
+            if (a.status === "Delayed" && b.status !== "Delayed") return -1;
+            if (b.status === "Delayed" && a.status !== "Delayed") return 1;
+            return urgency(a) - urgency(b);
+        });
+
+    document.getElementById("priorityTable").innerHTML =
+        orderRows(priorityOrders.slice(0, 4));
+
+    document.getElementById("priorityFull").innerHTML =
+        orderRows(priorityOrders);
+}
+async function loadInventory(){
+ let data=await api('/inventory');
+ document.getElementById('inventoryTable').innerHTML=`<table><thead><tr><th>Product</th><th>Variant</th><th>Warehouse</th><th>Available</th><th>Required</th><th>Location</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.map(i=>{
+   let action=i.shortage>0 && i.warehouse==='Main' ? `<button class="stock" onclick="moveStock(${i.id})">Move ${i.shortage} from Secondary</button>` : '—';
+   return `<tr><td>${i.product}</td><td>${i.variant}</td><td>${i.warehouse}</td><td><b>${i.available}</b></td><td>${i.required}</td><td>${i.location}</td><td>${i.shortage>0?badge('Shortage'):badge('Available')}</td><td>${action}</td></tr>`;
+ }).join('')}</tbody></table>`;
+}
+async function moveStock(id){
+ const r=await fetch('/api/inventory/'+id+'/move',{method:'POST'});
+ const d=await r.json();
+ if(!r.ok){alert(d.error||'Stock movement failed');return;}
+ await loadInventory();
+ await loadDashboard();
+ alert(d.message);
+}
+async function loadIssues(){let data=await api('/issues');document.getElementById('issuesTable').innerHTML=`<table><thead><tr><th>Issue</th><th>Order</th><th>Priority</th><th>Status</th><th>Notes</th><th></th></tr></thead><tbody>${data.map(i=>`<tr><td>${i.issue_type}</td><td>${i.order_no}</td><td>${badge(i.priority)}</td><td>${badge(i.status)}</td><td>${i.notes}</td><td>${i.status==='Open'?`<button class="action" onclick="resolve(${i.id})">Resolve</button>`:'✓'}</td></tr>`).join('')}</tbody></table>`}
+async function resolve(id){await fetch('/api/issues/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'Resolved'})});loadIssues();loadDashboard()}
+loadDashboard();
+</script>
+</body>
+</html>
